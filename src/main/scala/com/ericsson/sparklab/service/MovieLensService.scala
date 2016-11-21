@@ -13,19 +13,157 @@ import org.apache.spark.mllib.recommendation.{ ALS, Rating, MatrixFactorizationM
 import org.springframework.stereotype.Service
 import org.springframework.scheduling.annotation.Async
 
+import com.ericsson.sparklab.exception.NotReadyException
+import com.ericsson.sparklab.exception.ProcessingException
+import com.ericsson.sparklab.exception.ReadyException
+
 @Service
 class MovieLensService {
-
+    
+    var sc : SparkContext = null
+    var ready = false
+    var processing = false
+    var test : RDD[Rating] = null
+    var bestModel: Option[MatrixFactorizationModel] = None
+    var myRatings : Seq[Rating] = null
+    var movies : Map[Int, String] = null
+    
     @Async
+    def start() {
+        if (this.processing) {
+            throw new ProcessingException
+        }
+        if (this.ready) {
+            throw new ReadyException
+        }
+        
+        this.processing = true
+        
+        val conf = new SparkConf()
+            .setAppName("MovieLensALS")
+            .set("spark.executor.memory", "1g")
+            .setMaster("local[2]")
+            
+        this.sc = new SparkContext(conf)
+
+        this.train
+
+        this.ready = true
+        this.processing = false
+    }
+    
+    def train() {
+        // load personal ratings
+        this.myRatings = loadRatings("./personalRatings.txt")
+        val myRatingsRDD = this.sc.parallelize(this.myRatings, 1)
+
+        // load ratings and movie titles
+        val movieLensHomeDir = "./" 
+        
+        val ratings = sc.textFile(new File(movieLensHomeDir, "ratings.dat").toString).map { line =>
+            val fields = line.split("::")
+            // format: (timestamp % 10, Rating(userId, movieId, rating))
+            (fields(3).toLong % 10, Rating(fields(0).toInt, fields(1).toInt, fields(2).toDouble))
+        }
+
+        this.movies = sc.textFile(new File(movieLensHomeDir, "movies.dat").toString).map { line =>
+            val fields = line.split("::")
+            // format: (movieId, movieName)
+            (fields(0).toInt, fields(1))
+        }.collect().toMap
+
+        val numRatings = ratings.count()
+        val numUsers = ratings.map(_._2.user).distinct().count()
+        val numMovies = ratings.map(_._2.product).distinct().count()
+
+        println("Got " + numRatings + " ratings from "
+            + numUsers + " users on " + numMovies + " movies.")
+
+        // split ratings into train (60%), validation (20%), and test (20%) based on the 
+        // last digit of the timestamp, add myRatings to train, and cache them
+
+        val numPartitions = 4
+        val training = ratings.filter(x => x._1 < 6)
+            .values
+            .union(myRatingsRDD)
+            .repartition(numPartitions)
+            .cache()
+        val validation = ratings.filter(x => x._1 >= 6 && x._1 < 8)
+            .values
+            .repartition(numPartitions)
+            .cache()
+        this.test = ratings.filter(x => x._1 >= 8).values.cache()
+
+        val numTraining = training.count()
+        val numValidation = validation.count()
+        val numTest = test.count()
+
+        println("Training: " + numTraining + ", validation: " + numValidation + ", test: " + numTest)
+
+        // train models and evaluate them on the validation set
+
+        val ranks = List(8, 12)
+        val lambdas = List(0.1, 10.0)
+        val numIters = List(10, 20)
+        var bestValidationRmse = Double.MaxValue
+        var bestRank = 0
+        var bestLambda = -1.0
+        var bestNumIter = -1
+        for (rank <- ranks; lambda <- lambdas; numIter <- numIters) {
+            val model = ALS.train(training, rank, numIter, lambda)
+            val validationRmse = computeRmse(model, validation, numValidation)
+            
+            println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
+                + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
+                
+            if (validationRmse < bestValidationRmse) {
+                bestModel = Some(model)
+                bestValidationRmse = validationRmse
+                bestRank = rank
+                bestLambda = lambda
+                bestNumIter = numIter
+            }
+        }
+    }
+    
+    def statistics() {
+        // evaluate the best model on the test set
+        val testRmse = computeRmse(bestModel.get, test, test.count())
+
+       /* println("The best model was trained with rank = " + bestRank + " and lambda = " + bestLambda
+            + ", and numIter = " + bestNumIter + ", and its RMSE on the test set is " + testRmse + ".")
+
+        // create a naive baseline and compare it with the best model
+
+        val meanRating = training.union(validation).map(_.rating).mean
+        val baselineRmse =
+            math.sqrt(test.map(x => (meanRating - x.rating) * (meanRating - x.rating)).mean)
+        val improvement = (baselineRmse - testRmse) / baselineRmse * 100
+        println("The best model improves the baseline by " + "%1.2f".format(improvement) + "%.") */
+    }
+    
+    def recommendation(idUser : Int) = {
+        if (!this.ready) {
+            throw new NotReadyException
+        }
+        
+        val myRatedMovieIds = myRatings.map(_.product).toSet
+        val candidates = sc.parallelize(movies.keys.filter(!myRatedMovieIds.contains(_)).toSeq)
+        val recommendations = bestModel.get
+            .predict(candidates.map((idUser, _)))
+            .collect()
+            .sortBy(-_.rating)
+            .take(50)
+
+        recommendations.map { x => movies(x.product) }
+    }
+    
+    def destroy() {
+        sc.stop()
+    }
+
+    /*@Async
     def learn() {
-
-        //    if (args.length != 2) {
-        //      println("Usage: /path/to/spark/bin/spark-submit --driver-memory 2g --class MovieLensALS " +
-        //        "target/scala-*/movielens-als-ssembly-*.jar movieLensHomeDir personalRatingsFile")
-        //      sys.exit(1)
-        //    }
-
-        // set up environment
 
         val conf = new SparkConf()
             .setAppName("MovieLensALS")
@@ -95,8 +233,10 @@ class MovieLensService {
         for (rank <- ranks; lambda <- lambdas; numIter <- numIters) {
             val model = ALS.train(training, rank, numIter, lambda)
             val validationRmse = computeRmse(model, validation, numValidation)
+            
             println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
                 + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
+                
             if (validationRmse < bestValidationRmse) {
                 bestModel = Some(model)
                 bestValidationRmse = validationRmse
@@ -106,8 +246,12 @@ class MovieLensService {
             }
         }
 
-        // evaluate the best model on the test set
+        // Save model for the next time
+        //bestModel.get.save(sc, "bestModel")
+        
+        //sc.parallelize(Seq(bestModel, 1).saveAsObjectFile("ninja"))
 
+        // evaluate the best model on the test set
         val testRmse = computeRmse(bestModel.get, test, numTest)
 
         println("The best model was trained with rank = " + bestRank + " and lambda = " + bestLambda
@@ -139,8 +283,8 @@ class MovieLensService {
         }
 
         // clean up
-        sc.stop()
-    }
+        //sc.stop()
+    } */
 
     /** Compute RMSE (Root Mean Squared Error). */
     def computeRmse(model: MatrixFactorizationModel, data: RDD[Rating], n: Long): Double = {

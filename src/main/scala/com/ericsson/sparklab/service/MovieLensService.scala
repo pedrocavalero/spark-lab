@@ -31,32 +31,35 @@ class MovieLensService {
     var movies : Map[Int, String] = null
     var myRatingsRDD: RDD[Rating] = null
     
+    var validationRmse: Double = 0
+    
     @Async
-    def start() {
+    def start(rank: Int, lambda: Double, numIter: Int) {
         if (this.processing) {
             throw new ProcessingException
         }
-        if (this.ready) {
-            //throw new ReadyException
-          destroy();
+        if (!this.ready) {
+          //throw new ReadyException
+          //destroy();
+          val conf = new SparkConf()
+        		  .setAppName("MovieLensALS")
+        		  .set("spark.executor.memory", "2g")
+        		  .setMaster("local[2]")
+        		  
+        	this.sc = new SparkContext(conf)
+          sc.setCheckpointDir("'checkpoint/")
         }
         
         this.processing = true
         
-        val conf = new SparkConf()
-            .setAppName("MovieLensALS")
-            .set("spark.executor.memory", "2g")
-            .setMaster("local[2]")
-            
-        this.sc = new SparkContext(conf)
 
-        this.train
+        this.train(rank: Int, lambda: Double, numIter: Int)
 
         this.ready = true
         this.processing = false
     }
     
-    def train() {
+    def train(rank: Int, lambda: Double, numIter: Int) {
         // load data
         if(!ready)
           loadData()
@@ -94,7 +97,7 @@ class MovieLensService {
         // train models and evaluate them on the validation set
 
         //chooseBestModel(training, validation)
-        runModel(training, validation, 8, 0.1, 20)
+        runModel(training, validation, rank, lambda, numIter)//8, 0.1, 20)
         
     }
     
@@ -119,7 +122,7 @@ class MovieLensService {
         var bestNumIter = -1
         for (rank <- ranks; lambda <- lambdas; numIter <- numIters) {
             val model = ALS.train(training, rank, numIter, lambda)
-            val validationRmse = computeRmse(model, validation, numValidation)
+            this.validationRmse = computeRmse(model, validation, numValidation)
             
             println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
                 + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
@@ -158,20 +161,8 @@ class MovieLensService {
         }.collect().toMap
     }
     
-    def statistics() {
-        // evaluate the best model on the test set
-        val testRmse = computeRmse(bestModel.get, test, test.count())
-
-       /* println("The best model was trained with rank = " + bestRank + " and lambda = " + bestLambda
-            + ", and numIter = " + bestNumIter + ", and its RMSE on the test set is " + testRmse + ".")
-
-        // create a naive baseline and compare it with the best model
-
-        val meanRating = training.union(validation).map(_.rating).mean
-        val baselineRmse =
-            math.sqrt(test.map(x => (meanRating - x.rating) * (meanRating - x.rating)).mean)
-        val improvement = (baselineRmse - testRmse) / baselineRmse * 100
-        println("The best model improves the baseline by " + "%1.2f".format(improvement) + "%.") */
+    def statistics() = {
+      this.validationRmse
     }
     
     def recommendation(idUser : Int): Seq[Rating] = {

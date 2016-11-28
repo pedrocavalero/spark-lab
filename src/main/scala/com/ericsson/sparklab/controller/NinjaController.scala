@@ -11,6 +11,7 @@ import org.springframework.http.MediaType
 
 
 import com.ericsson.sparklab.service.MovieLensService
+import java.lang.Double
 
 @RestController
 @RequestMapping(Array("ninja"))
@@ -20,10 +21,20 @@ class NinjaController @Autowired()(private val movieLensService: MovieLensServic
     def hi(): String = {
       "scala cabulox"
     }
-
+    @RequestMapping(Array("/statistics"))
+    def statistics(): Double = {
+      this.movieLensService.validationRmse
+    }
     @RequestMapping(Array("start"))
-    def trigger() = {
-        this.movieLensService.start()
+    def start(@RequestParam(value="rank", required = false) rank: Integer, 
+        @RequestParam(value="lambda", required = false) lambda: Double, 
+        @RequestParam(value="numIter", required = false) numIter: Integer) = {
+      
+        if(rank==null||lambda==null||numIter==null){
+          this.movieLensService.start(8, 0.1, 20)        
+        } else {
+          this.movieLensService.start(rank, lambda, numIter)
+        }
 
         "OK"
     }

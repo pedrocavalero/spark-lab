@@ -36,6 +36,9 @@ class NinjaController @Autowired()(private val movieLensService: MovieLensServic
         var i = 1
         output.append("[\n")
         movieList.foreach { r =>
+            if(i!=1){
+              output.append(",")
+            }
             output.append("{ movieId: %s, rating: %s }\n".format(r.product, r.rating))
 
             i += 1

@@ -29,6 +29,7 @@ class MovieLensService {
     var myRatings : Seq[Rating] = null
     var ratings : RDD[(Long, Rating)] = null
     var movies : Map[Int, String] = null
+    var myRatingsRDD: RDD[Rating] = null
     
     @Async
     def start() {
@@ -60,7 +61,7 @@ class MovieLensService {
         if(!ready)
           loadData()
         
-        val myRatingsRDD = this.sc.parallelize(this.myRatings, 1)
+        //myRatingsRDD = this.sc.parallelize(this.myRatings, 1)
 
 //        val numRatings = ratings.count()
 //        val numUsers = ratings.map(_._2.user).distinct().count()
@@ -137,8 +138,13 @@ class MovieLensService {
               // load ratings and movie titles
         val movieLensHomeDir = "./" 
 
-        this.myRatings = loadRatings("./personalRatings.txt")
-     		
+        this.myRatingsRDD = sc.textFile(new File(movieLensHomeDir, "personalRatings.txt").toString).map { line =>
+            val fields = line.split("::")
+            Rating(fields(0).toInt, fields(1).toInt, fields(2).toDouble)
+        }.filter(_.rating > 0.0)
+        
+     		this.myRatings = myRatingsRDD.collect().toSeq
+        
         this.ratings = sc.textFile(new File(movieLensHomeDir, "ratings.dat").toString).map { line =>
         		val fields = line.split("::")
         		// format: (timestamp % 10, Rating(userId, movieId, rating))

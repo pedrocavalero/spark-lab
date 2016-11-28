@@ -28,20 +28,19 @@ class NinjaController @Autowired()(private val movieLensService: MovieLensServic
         "OK"
     }
     
-    @RequestMapping(value = Array("rec"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
+    @RequestMapping(value = Array("recommendations"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
     def rec(@RequestParam("id") idUser: Int) = {
         val movieList = this.movieLensService.recommendation(idUser)
         val output = StringBuilder.newBuilder
             
         var i = 1
-        
-        output.append("Movies recommended for you (%d):\n".format(idUser))
+        output.append("[\n")
         movieList.foreach { r =>
-            output.append("%2d: %s\n".format(i, r))
+            output.append("{ movieId: %s, rating: %s }\n".format(r.product, r.rating))
 
             i += 1
         }
-
+        output.append("\n]")
         output
     }
 

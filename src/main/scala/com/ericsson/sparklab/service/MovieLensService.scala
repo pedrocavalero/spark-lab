@@ -168,7 +168,7 @@ class MovieLensService {
         println("The best model improves the baseline by " + "%1.2f".format(improvement) + "%.") */
     }
     
-    def recommendation(idUser : Int) = {
+    def recommendation(idUser : Int): Seq[Rating] = {
         if (!this.ready) {
             throw new NotReadyException
         }
@@ -181,7 +181,7 @@ class MovieLensService {
             .sortBy(-_.rating)
             .take(50)
 
-        recommendations.map { x => movies(x.product) }
+        recommendations
     }
     
     def destroy() {

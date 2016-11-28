@@ -25,7 +25,9 @@ class MovieLensService {
     var processing = false
     var test : RDD[Rating] = null
     var bestModel: Option[MatrixFactorizationModel] = None
+
     var myRatings : Seq[Rating] = null
+    var ratings : RDD[(Long, Rating)] = null
     var movies : Map[Int, String] = null
     
     @Async
@@ -34,14 +36,15 @@ class MovieLensService {
             throw new ProcessingException
         }
         if (this.ready) {
-            throw new ReadyException
+            //throw new ReadyException
+          destroy();
         }
         
         this.processing = true
         
         val conf = new SparkConf()
             .setAppName("MovieLensALS")
-            .set("spark.executor.memory", "1g")
+            .set("spark.executor.memory", "2g")
             .setMaster("local[2]")
             
         this.sc = new SparkContext(conf)
@@ -53,31 +56,18 @@ class MovieLensService {
     }
     
     def train() {
-        // load personal ratings
-        this.myRatings = loadRatings("./personalRatings.txt")
+        // load data
+        if(!ready)
+          loadData()
+        
         val myRatingsRDD = this.sc.parallelize(this.myRatings, 1)
 
-        // load ratings and movie titles
-        val movieLensHomeDir = "./" 
-        
-        val ratings = sc.textFile(new File(movieLensHomeDir, "ratings.dat").toString).map { line =>
-            val fields = line.split("::")
-            // format: (timestamp % 10, Rating(userId, movieId, rating))
-            (fields(3).toLong % 10, Rating(fields(0).toInt, fields(1).toInt, fields(2).toDouble))
-        }
-
-        this.movies = sc.textFile(new File(movieLensHomeDir, "movies.dat").toString).map { line =>
-            val fields = line.split("::")
-            // format: (movieId, movieName)
-            (fields(0).toInt, fields(1))
-        }.collect().toMap
-
-        val numRatings = ratings.count()
-        val numUsers = ratings.map(_._2.user).distinct().count()
-        val numMovies = ratings.map(_._2.product).distinct().count()
-
-        println("Got " + numRatings + " ratings from "
-            + numUsers + " users on " + numMovies + " movies.")
+//        val numRatings = ratings.count()
+//        val numUsers = ratings.map(_._2.user).distinct().count()
+//        val numMovies = ratings.map(_._2.product).distinct().count()
+//
+//        println("Got " + numRatings + " ratings from "
+//            + numUsers + " users on " + numMovies + " movies.")
 
         // split ratings into train (60%), validation (20%), and test (20%) based on the 
         // last digit of the timestamp, add myRatings to train, and cache them
@@ -102,6 +92,23 @@ class MovieLensService {
 
         // train models and evaluate them on the validation set
 
+        //chooseBestModel(training, validation)
+        runModel(training, validation, 8, 0.1, 20)
+        
+    }
+    
+    def runModel(training: RDD[Rating], validation: RDD[Rating], rank: Int, lambda: Double, numIter: Int){
+      val numValidation = validation.count()
+      val model = ALS.train(training, rank, numIter, lambda)
+      val validationRmse = computeRmse(model, validation, numValidation)     
+      bestModel = Some(model)
+      println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
+                + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
+    }
+    
+    def chooseBestModel(training: RDD[Rating], validation: RDD[Rating]){
+        val numValidation = validation.count()
+
         val ranks = List(8, 12)
         val lambdas = List(0.1, 10.0)
         val numIters = List(10, 20)
@@ -124,6 +131,25 @@ class MovieLensService {
                 bestNumIter = numIter
             }
         }
+    }
+    
+    def loadData(){
+              // load ratings and movie titles
+        val movieLensHomeDir = "./" 
+
+        this.myRatings = loadRatings("./personalRatings.txt")
+     		
+        this.ratings = sc.textFile(new File(movieLensHomeDir, "ratings.dat").toString).map { line =>
+        		val fields = line.split("::")
+        		// format: (timestamp % 10, Rating(userId, movieId, rating))
+        		(fields(3).toLong % 10, Rating(fields(0).toInt, fields(1).toInt, fields(2).toDouble))
+        }
+        
+        this.movies = sc.textFile(new File(movieLensHomeDir, "movies.dat").toString).map { line =>
+          val fields = line.split("::")
+          // format: (movieId, movieName)
+          (fields(0).toInt, fields(1))
+        }.collect().toMap
     }
     
     def statistics() {
@@ -162,129 +188,7 @@ class MovieLensService {
         sc.stop()
     }
 
-    /*@Async
-    def learn() {
-
-        val conf = new SparkConf()
-            .setAppName("MovieLensALS")
-            .set("spark.executor.memory", "1g")
-            .setMaster("local[2]")
-        val sc = new SparkContext(conf)
-
-        // load personal ratings
-
-        val myRatings = loadRatings("./personalRatings.txt") //args(1))
-        val myRatingsRDD = sc.parallelize(myRatings, 1)
-
-        // load ratings and movie titles
-
-        val movieLensHomeDir = "./" //args(0)
-
-        val ratings = sc.textFile(new File(movieLensHomeDir, "ratings.dat").toString).map { line =>
-            val fields = line.split("::")
-            // format: (timestamp % 10, Rating(userId, movieId, rating))
-            (fields(3).toLong % 10, Rating(fields(0).toInt, fields(1).toInt, fields(2).toDouble))
-        }
-
-        val movies = sc.textFile(new File(movieLensHomeDir, "movies.dat").toString).map { line =>
-            val fields = line.split("::")
-            // format: (movieId, movieName)
-            (fields(0).toInt, fields(1))
-        }.collect().toMap
-
-        val numRatings = ratings.count()
-        val numUsers = ratings.map(_._2.user).distinct().count()
-        val numMovies = ratings.map(_._2.product).distinct().count()
-
-        println("Got " + numRatings + " ratings from "
-            + numUsers + " users on " + numMovies + " movies.")
-
-        // split ratings into train (60%), validation (20%), and test (20%) based on the 
-        // last digit of the timestamp, add myRatings to train, and cache them
-
-        val numPartitions = 4
-        val training = ratings.filter(x => x._1 < 6)
-            .values
-            .union(myRatingsRDD)
-            .repartition(numPartitions)
-            .cache()
-        val validation = ratings.filter(x => x._1 >= 6 && x._1 < 8)
-            .values
-            .repartition(numPartitions)
-            .cache()
-        val test = ratings.filter(x => x._1 >= 8).values.cache()
-
-        val numTraining = training.count()
-        val numValidation = validation.count()
-        val numTest = test.count()
-
-        println("Training: " + numTraining + ", validation: " + numValidation + ", test: " + numTest)
-
-        // train models and evaluate them on the validation set
-
-        val ranks = List(8, 12)
-        val lambdas = List(0.1, 10.0)
-        val numIters = List(10, 20)
-        var bestModel: Option[MatrixFactorizationModel] = None
-        var bestValidationRmse = Double.MaxValue
-        var bestRank = 0
-        var bestLambda = -1.0
-        var bestNumIter = -1
-        for (rank <- ranks; lambda <- lambdas; numIter <- numIters) {
-            val model = ALS.train(training, rank, numIter, lambda)
-            val validationRmse = computeRmse(model, validation, numValidation)
-            
-            println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
-                + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
-                
-            if (validationRmse < bestValidationRmse) {
-                bestModel = Some(model)
-                bestValidationRmse = validationRmse
-                bestRank = rank
-                bestLambda = lambda
-                bestNumIter = numIter
-            }
-        }
-
-        // Save model for the next time
-        //bestModel.get.save(sc, "bestModel")
-        
-        //sc.parallelize(Seq(bestModel, 1).saveAsObjectFile("ninja"))
-
-        // evaluate the best model on the test set
-        val testRmse = computeRmse(bestModel.get, test, numTest)
-
-        println("The best model was trained with rank = " + bestRank + " and lambda = " + bestLambda
-            + ", and numIter = " + bestNumIter + ", and its RMSE on the test set is " + testRmse + ".")
-
-        // create a naive baseline and compare it with the best model
-
-        val meanRating = training.union(validation).map(_.rating).mean
-        val baselineRmse =
-            math.sqrt(test.map(x => (meanRating - x.rating) * (meanRating - x.rating)).mean)
-        val improvement = (baselineRmse - testRmse) / baselineRmse * 100
-        println("The best model improves the baseline by " + "%1.2f".format(improvement) + "%.")
-
-        // make personalized recommendations
-
-        val myRatedMovieIds = myRatings.map(_.product).toSet
-        val candidates = sc.parallelize(movies.keys.filter(!myRatedMovieIds.contains(_)).toSeq)
-        val recommendations = bestModel.get
-            .predict(candidates.map((0, _)))
-            .collect()
-            .sortBy(-_.rating)
-            .take(50)
-
-        var i = 1
-        println("Movies recommended for you:")
-        recommendations.foreach { r =>
-            println("%2d".format(i) + ": " + movies(r.product))
-            i += 1
-        }
-
-        // clean up
-        //sc.stop()
-    } */
+   
 
     /** Compute RMSE (Root Mean Squared Error). */
     def computeRmse(model: MatrixFactorizationModel, data: RDD[Rating], n: Long): Double = {
@@ -307,5 +211,14 @@ class MovieLensService {
         } else {
             ratings.toSeq
         }
+    }
+    
+    def getRatingsByUserId(userId: Int): Seq[Rating] = {
+        if(userId==0){
+        	myRatings.filter( r => r.user == userId)
+        } else {
+        	ratings.filter( r => r._2.user == userId).map(r => r._2).collect()
+        }
+          
     }
 }

@@ -17,7 +17,9 @@ import com.ericsson.sparklab.service.MovieLensService
 class NinjaController @Autowired()(private val movieLensService: MovieLensService) {
 
     @RequestMapping(Array("/hi"))
-    def hi(): String = "scala cabulox"
+    def hi(): String = {
+      "scala cabulox"
+    }
 
     @RequestMapping(Array("start"))
     def trigger() = {
@@ -43,4 +45,23 @@ class NinjaController @Autowired()(private val movieLensService: MovieLensServic
         output
     }
 
+    @RequestMapping(value = Array("ratings"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
+    def ratings(@RequestParam("id") idUser: Int) = {
+        val r = this.movieLensService.getRatingsByUserId(idUser)
+        val output = StringBuilder.newBuilder
+          
+        output.append("[\n")
+        var i = 1
+        r.foreach { r =>
+            if(i!=1){
+              output.append(",")
+            }
+            output.append("{ movieId: %s, rating: %s }\n".format(r.product, r.rating))
+            i += 1
+        }
+        output.append("\n]")
+        output
+    }
+    
+    
 }

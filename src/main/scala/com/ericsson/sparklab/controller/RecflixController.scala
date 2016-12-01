@@ -43,6 +43,15 @@ class RecflixController @Autowired()(private val movieLensService: MovieLensServ
 
         "OK"
     }
+    
+    @RequestMapping(Array("newrating"))
+    def start(@RequestParam(value="id") id: Int, 
+        @RequestParam(value="movieId") movieId: Int, 
+        @RequestParam(value="rating") rating: Double) = {
+      
+        this.movieLensService.setRating(id, movieId, rating)
+        "OK"
+    }
 
     @RequestMapping(value = Array("recommendations"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
     def rec(@RequestParam("id") idUser: Int) = {

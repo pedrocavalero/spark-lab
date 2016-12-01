@@ -20,6 +20,7 @@ import com.ericsson.sparklab.exception.ReadyException
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import scala.collection.mutable.ListBuffer
+import java.util.Date
 
 
 @Service
@@ -70,15 +71,6 @@ class MovieLensService {
         // load data
         if(!ready)
           loadData()
-        
-        //myRatingsRDD = this.sc.parallelize(this.myRatings, 1)
-
-//        val numRatings = ratings.count()
-//        val numUsers = ratings.map(_._2.user).distinct().count()
-//        val numMovies = ratings.map(_._2.product).distinct().count()
-//
-//        println("Got " + numRatings + " ratings from "
-//            + numUsers + " users on " + numMovies + " movies.")
 
         // split ratings into train (60%), validation (20%), and test (20%) based on the 
         // last digit of the timestamp, add myRatings to train, and cache them
@@ -211,6 +203,19 @@ class MovieLensService {
         list(0)
       else
         null
+    }
+    
+    def setRating(userId:Int, movieId: Int, rating: Double){
+      val r = Rating(userId,movieId,rating)
+      println("Adicionando o rating " + r + " no RDD")
+      if(userId==0){
+    	  val rRDD = this.sc.makeRDD(Seq(r))
+ 			  this.myRatingsRDD = this.myRatingsRDD.union(rRDD)
+ 			  this.myRatings = myRatingsRDD.collect().toSeq
+      } else {
+        val rRDD = this.sc.makeRDD(Seq((new Date().getTime(),r)))
+        this.ratings = this.ratings.union(rRDD)
+      }
     }
 
     /** Compute RMSE (Root Mean Squared Error). */

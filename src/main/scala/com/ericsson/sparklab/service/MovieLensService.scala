@@ -17,6 +17,11 @@ import com.ericsson.sparklab.exception.NotReadyException
 import com.ericsson.sparklab.exception.ProcessingException
 import com.ericsson.sparklab.exception.ReadyException
 
+import org.json4s._
+import org.json4s.jackson.JsonMethods._
+import scala.collection.mutable.ListBuffer
+
+
 @Service
 class MovieLensService {
     
@@ -32,6 +37,8 @@ class MovieLensService {
     var myRatingsRDD: RDD[Rating] = null
     
     var validationRmse: Double = 0
+    var imdb: JValue = null
+    var imdbList: List[Movie] = null
     
     @Async
     def start(rank: Int, lambda: Double, numIter: Int) {
@@ -104,7 +111,7 @@ class MovieLensService {
     def runModel(training: RDD[Rating], validation: RDD[Rating], rank: Int, lambda: Double, numIter: Int){
       val numValidation = validation.count()
       val model = ALS.train(training, rank, numIter, lambda)
-      val validationRmse = computeRmse(model, validation, numValidation)     
+      this.validationRmse = computeRmse(model, validation, numValidation)     
       bestModel = Some(model)
       println("RMSE (validation) = " + validationRmse + " for the model trained with rank = "
                 + rank + ", lambda = " + lambda + ", and numIter = " + numIter + ".")
@@ -159,7 +166,20 @@ class MovieLensService {
           // format: (movieId, movieName)
           (fields(0).toInt, fields(1))
         }.collect().toMap
+        
+        var auxList = new ListBuffer[Movie]()
+        this.imdb = parse(file2JsonInput(new File(movieLensHomeDir, "imdb.json")))
+        implicit val formats = DefaultFormats
+        imdb.children.foreach { 
+          movie => {
+            val mOpt = movie.extractOpt[Movie]
+            mOpt foreach { m => auxList +=m }
+          }
+        }
+        this.imdbList = auxList.toList
     }
+    
+
     
     def statistics() = {
       this.validationRmse
@@ -185,7 +205,13 @@ class MovieLensService {
         sc.stop()
     }
 
-   
+    def getImdbById(id:String):Movie={
+      val list = imdbList filter( _.id == id)
+      if(list.size>0)
+        list(0)
+      else
+        null
+    }
 
     /** Compute RMSE (Root Mean Squared Error). */
     def computeRmse(model: MatrixFactorizationModel, data: RDD[Rating], n: Long): Double = {
@@ -219,3 +245,28 @@ class MovieLensService {
           
     }
 }
+
+case class Movie(id: String, raw: MovieRaw, metadata: MovieMetadata)
+case class MovieRaw(id: String, name: String, year: Int, genre: List[String])
+case class MovieMetadata(
+    Title: String, 
+    Year: String, 
+    Rated: String,
+    Released: String,
+    Runtime: String,
+    Genre: String,
+    Director: String,
+    Writer: String,
+    Actors: String,
+    Plot: String,
+    Language: String,
+    Country: String,
+    Awards: String,
+    Poster: String,
+    Metascore: String,
+    imdbRating: String,
+    imdbVotes: String,
+    imdbID: String,
+    Type: String,
+    Response: String
+)

@@ -13,13 +13,18 @@ import org.springframework.http.MediaType
 import com.ericsson.sparklab.service.MovieLensService
 import java.lang.Double
 
+import org.json4s.jackson.Serialization._
+import org.json4s._
+import org.json4s.jackson.JsonMethods._
+import org.apache.spark.mllib.recommendation.Rating
+
 @RestController
-@RequestMapping(Array("ninja"))
-class NinjaController @Autowired()(private val movieLensService: MovieLensService) {
+@RequestMapping(Array("recflix"))
+class RecflixController @Autowired()(private val movieLensService: MovieLensService) {
 
     @RequestMapping(Array("/hi"))
     def hi(): String = {
-      "scala cabulox"
+      "Recflix Rulez"
     }
     @RequestMapping(Array("/statistics"))
     def statistics(): Double = {
@@ -38,42 +43,37 @@ class NinjaController @Autowired()(private val movieLensService: MovieLensServic
 
         "OK"
     }
-    
+
     @RequestMapping(value = Array("recommendations"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
     def rec(@RequestParam("id") idUser: Int) = {
-        val movieList = this.movieLensService.recommendation(idUser)
-        val output = StringBuilder.newBuilder
-            
-        var i = 1
-        output.append("[\n")
-        movieList.foreach { r =>
-            if(i!=1){
-              output.append(",")
-            }
-            output.append("{ movieId: %s, rating: %s }\n".format(r.product, r.rating))
-
-            i += 1
-        }
-        output.append("\n]")
-        output
+      val movieList = this.movieLensService.recommendation(idUser)
+		  mergeMovies(movieList)
     }
 
+    def mergeMovies(movieList:Seq[Rating]):String ={
+ 		  implicit val formats = DefaultFormats
+      val output = StringBuilder.newBuilder
+      output.append("[\n")
+      var i = 1
+      movieList.foreach { r =>
+        val movie = this.movieLensService.getImdbById(r.product.toString())
+        if(movie!=null){
+        	if(i!=1){
+        		output.append(",")
+        	}
+     			output.append("{ \"id\":\"%s\", \"title\":\"%s\",\"year\":\"%s\",\"poster\":\"%s\",\"plot\":\"%s\",\"rating\":\"%s\"} ".
+     			    format(r.product, movie.metadata.Title, movie.metadata.Year, movie.metadata.Poster, movie.metadata.Plot, r.rating))
+     			output.append("\n")
+        }
+        i+=1
+      }
+      output.append("\n]")
+      output.toString()
+    }
     @RequestMapping(value = Array("ratings"), produces = Array(MediaType.TEXT_PLAIN_VALUE))
     def ratings(@RequestParam("id") idUser: Int) = {
         val r = this.movieLensService.getRatingsByUserId(idUser)
-        val output = StringBuilder.newBuilder
-          
-        output.append("[\n")
-        var i = 1
-        r.foreach { r =>
-            if(i!=1){
-              output.append(",")
-            }
-            output.append("{ movieId: %s, rating: %s }\n".format(r.product, r.rating))
-            i += 1
-        }
-        output.append("\n]")
-        output
+        mergeMovies(r)
     }
     
     
